@@ -34,6 +34,10 @@ struct WaterSurface {
             *out++=a;*out++=b;*out++=c;*out++=b;*out++=d;*out++=c;
         }
     }
+    template<class Vertex> static void plane(Vertex* out,float depth){
+        for(uint32_t y=0;y<=rows;y++)for(uint32_t x=0;x<=columns;x++)
+            out[y*(columns+1)+x]={extent*(2.f*x/columns-1)*depth,extent*(2.f*y/rows-1)*depth,-depth};
+    }
     template<class Vertex> static void diagnosticWindow(Vertex* vertices,float phase){
         // A visibly changing footprint distinguishes mutable-buffer updates from
         // depth-only changes that the compositor may not visibly reproject.

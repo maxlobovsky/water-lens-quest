@@ -62,6 +62,15 @@ int main(int argc,char** argv){
     std::vector<uint32_t> indices(WaterSurface::triangleCount*3);
     WaterSurface::indices(indices.data());
     for(auto i:indices)assert(i<surface.size());
+    for(float depth:{.2f,8.f}){
+        WaterSurface::plane(surface.data(),depth);
+        for(uint32_t y=0;y<=WaterSurface::rows;y++)for(uint32_t x=0;x<=WaterSurface::columns;x++){
+            const auto v=surface[y*(WaterSurface::columns+1)+x];
+            assert(std::abs(v.z+depth)<.00001f);
+            assert(std::abs(v.x/-v.z-WaterSurface::extent*(2.f*x/WaterSurface::columns-1))<.00001f);
+            assert(std::abs(v.y/-v.z-WaterSurface::extent*(2.f*y/WaterSurface::rows-1))<.00001f);
+        }
+    }
     WaterSurface::vertices(surface.data(),0,.8f,1,.5f,0);
     WaterSurface::diagnosticWindow(surface.data(),0);
     assert(std::abs(surface.back().x/-surface.back().z-.44f)<.00001f);

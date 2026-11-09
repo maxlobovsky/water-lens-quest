@@ -8,6 +8,11 @@ struct ProjectedWater {
     XrGeometryInstanceFB geometry=XR_NULL_HANDLE;
     bool ready=false;
     bool visibilityProbe=false;
+    // USB-only experiments, consumed for one launch. 2 = waves without the
+    // reconstruction layer, 3 = near/far sweep, 4/5 = immutable near/far planes.
+    int experiment=0,lastPlane=-1;
+    bool solo()const{return experiment>=2;}
+    bool immutable()const{return experiment==4||experiment==5;}
     uint32_t updates=0;
     double updateMilliseconds=0;
     PFN_xrDestroyPassthroughLayerFB destroyLayer=nullptr;
@@ -22,7 +27,8 @@ struct ProjectedWater {
         if(!directory)return;
         const auto path=std::string(directory)+"/surface-test.txt";
         FILE* file=std::fopen(path.c_str(),"r");if(!file)return;
-        int mode=0;visibilityProbe=std::fscanf(file,"%d",&mode)==1&&mode==1;
+        int mode=0;if(std::fscanf(file,"%d",&mode)==1&&mode>=1&&mode<=5)experiment=mode;
+        visibilityProbe=experiment==1;
         std::fclose(file);
         // One launch only. A failed/abandoned capture must not change the next
         // ordinary startup from the working Camera mode.
@@ -49,13 +55,22 @@ struct ProjectedWater {
             li.flags=XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB;
             XR(createLayer(session,&li,&layer));
             XrTriangleMeshCreateInfoFB mi{XR_TYPE_TRIANGLE_MESH_CREATE_INFO_FB};
-            mi.flags=XR_TRIANGLE_MESH_MUTABLE_BIT_FB;mi.windingOrder=XR_WINDING_ORDER_CCW_FB;
+            mi.flags=immutable()?0:XR_TRIANGLE_MESH_MUTABLE_BIT_FB;mi.windingOrder=XR_WINDING_ORDER_CCW_FB;
             mi.vertexCount=WaterSurface::vertexCount;mi.triangleCount=WaterSurface::triangleCount;
+            std::vector<XrVector3f> initialVertices;std::vector<uint32_t> initialIndices;
+            if(immutable()){
+                initialVertices.resize(mi.vertexCount);initialIndices.resize(mi.triangleCount*3);
+                WaterSurface::plane(initialVertices.data(),experiment==4?.20f:8.f);
+                WaterSurface::indices(initialIndices.data());
+                mi.vertexBuffer=initialVertices.data();mi.indexBuffer=initialIndices.data();
+            }
             XR(createMesh(session,&mi,&mesh));
-            XR(begin(mesh));XrVector3f* vertices=nullptr;uint32_t* indices=nullptr;
-            XR(getVertices(mesh,&vertices));XR(getIndices(mesh,&indices));
-            WaterSurface::vertices(vertices,0,0,1,0,0);WaterSurface::indices(indices);
-            XR(end(mesh,WaterSurface::vertexCount,WaterSurface::triangleCount));
+            if(!immutable()){
+                XR(begin(mesh));XrVector3f* vertices=nullptr;uint32_t* indices=nullptr;
+                XR(getVertices(mesh,&vertices));XR(getIndices(mesh,&indices));
+                WaterSurface::vertices(vertices,0,0,1,0,0);WaterSurface::indices(indices);
+                XR(end(mesh,WaterSurface::vertexCount,WaterSurface::triangleCount));
+            }
             XrGeometryInstanceCreateInfoFB gi{XR_TYPE_GEOMETRY_INSTANCE_CREATE_INFO_FB};
             gi.layer=layer;gi.mesh=mesh;gi.baseSpace=space;gi.pose.orientation.w=1;gi.scale={1,1,1};
             XR(createGeometry(session,&gi,&geometry));
@@ -71,21 +86,28 @@ struct ProjectedWater {
                 LOGI("SURFACE PROBE: green projected layer, pulsing vertex footprint, normal reconstruction underneath");
             }
             ready=true;
-            LOGI("FULLVIEW projected passthrough ready: %u vertices, %u triangles, scale=1",mi.vertexCount,mi.triangleCount);
+            LOGI("FULLVIEW projected passthrough ready: %u vertices, %u triangles, scale=1 experiment=%d",mi.vertexCount,mi.triangleCount,experiment);
         }catch(const std::exception& error){LOGE("FULLVIEW unavailable: %s",error.what());destroy();}
     }
     bool update(XrSpace space,XrTime time,const XrPosef& pose,float phase,const EffectSettings& s){
         if(!ready)return false;
         const auto start=nanos(CLOCK_MONOTONIC);
         try{
-            uint32_t count=0;XR(beginVertices(mesh,&count));
-            XrVector3f* vertices=nullptr;const auto result=getVertices(mesh,&vertices);
-            if(XR_SUCCEEDED(result)&&count==WaterSurface::vertexCount){
-                WaterSurface::vertices(vertices,phase,s.strength,s.density,s.complexity,s.sharpness);
-                if(visibilityProbe)WaterSurface::diagnosticWindow(vertices,phase);
+            if(!immutable()){
+                uint32_t count=0;XR(beginVertices(mesh,&count));
+                XrVector3f* vertices=nullptr;const auto result=getVertices(mesh,&vertices);
+                if(XR_SUCCEEDED(result)&&count==WaterSurface::vertexCount){
+                    WaterSurface::vertices(vertices,phase,s.strength,s.density,s.complexity,s.sharpness);
+                    if(visibilityProbe)WaterSurface::diagnosticWindow(vertices,phase);
+                    if(experiment==3){
+                        const int plane=int((double(time)*1e-9)/2)%2;
+                        WaterSurface::plane(vertices,plane?.20f:8.f);
+                        if(plane!=lastPlane){LOGI("SURFACE depth sweep: %.2fm at %.6f",plane?.20f:8.f,double(time)*1e-9);lastPlane=plane;}
+                    }
+                }
+                XR(endVertices(mesh));XR(result);
+                if(count!=WaterSurface::vertexCount)throw std::runtime_error("Unexpected projected mesh size");
             }
-            XR(endVertices(mesh));XR(result);
-            if(count!=WaterSurface::vertexCount)throw std::runtime_error("Unexpected projected mesh size");
             XrGeometryInstanceTransformFB t{XR_TYPE_GEOMETRY_INSTANCE_TRANSFORM_FB};
             t.baseSpace=space;t.time=time;t.pose=pose;t.scale={1,1,1};XR(transform(geometry,&t));
             updates++;updateMilliseconds+=(nanos(CLOCK_MONOTONIC)-start)*1e-6;

@@ -21,6 +21,7 @@ struct Camera {
     int eye=0, width=1280, height=1280;
     bool bootTimeTimestamps=false;
     bool distortionOffSupported=false;
+    bool spatialSbs=false;
     float intrinsics[5]{}, distortion[5]{};
     // Intrinsics are normalized to the actual aspect-ratio crop.
     float calibration[4]{};
@@ -43,18 +44,20 @@ struct Camera {
     static bool entry(const ACameraMetadata* m,uint32_t tag,ACameraMetadata_const_entry& e) {
         return ACameraMetadata_getConstEntry(m,tag,&e)==ACAMERA_OK && e.count;
     }
-    void configure(const ACameraMetadata* metadata,int requestedSize=1728) {
+    void configure(const ACameraMetadata* metadata,int requestedSize=1728,bool spatial=false) {
+        spatialSbs=spatial;distortionOffSupported=false;
+        std::fill(std::begin(distortion),std::end(distortion),0.f);
         ACameraMetadata_const_entry e{};
         auto floats=[&](uint32_t tag,float* dest,uint32_t count){
             if(!entry(metadata,tag,e)||e.type!=ACAMERA_TYPE_FLOAT||e.count<count)
                 throw std::runtime_error("Camera calibration is missing");
             std::copy(e.data.f,e.data.f+count,dest);
         };
-        floats(ACAMERA_LENS_INTRINSIC_CALIBRATION,intrinsics,5);
+        floats(spatial&&eye==1?0x80004d05:ACAMERA_LENS_INTRINSIC_CALIBRATION,intrinsics,5);
         XrQuaternionf rotation;
         XrVector3f translation;
-        floats(ACAMERA_LENS_POSE_ROTATION,&rotation.x,4);
-        floats(ACAMERA_LENS_POSE_TRANSLATION,&translation.x,3);
+        floats(spatial&&eye==1?0x80004d07:ACAMERA_LENS_POSE_ROTATION,&rotation.x,4);
+        floats(spatial&&eye==1?0x80004d06:ACAMERA_LENS_POSE_TRANSLATION,&translation.x,3);
         // Android specifies head/sensor -> optical-camera rotation. Coordinates
         // in this camera basis project as x/z, y/z with a top-left image origin.
         XrMatrix4x4f rotate, translate;
@@ -67,23 +70,27 @@ struct Camera {
         if(!entry(metadata,sensorTag,e)||e.count<4)
             throw std::runtime_error("Camera sensor bounds are missing");
         const float left=e.data.i32[0], top=e.data.i32[1];
-        const float sensorWidth=e.data.i32[2]-left, sensorHeight=e.data.i32[3]-top;
+        const float sensorWidth=(e.data.i32[2]-left)/(spatial?2.f:1.f), sensorHeight=e.data.i32[3]-top;
         if(!entry(metadata,ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS,e))
             throw std::runtime_error("Camera resolutions unavailable");
-        bool high=false, square=false, classic=false;
+        bool high=false, square=false, classic=false, sbs=false;
         for(uint32_t i=0;i+3<e.count;i+=4) {
             if(e.data.i32[i]!=AIMAGE_FORMAT_YUV_420_888||e.data.i32[i+3]!=0)continue;
             high |= e.data.i32[i+1]==1728 && e.data.i32[i+2]==1728;
             square |= e.data.i32[i+1]==1280 && e.data.i32[i+2]==1280;
             classic |= e.data.i32[i+1]==1280 && e.data.i32[i+2]==960;
+            sbs |= e.data.i32[i+1]==3456 && e.data.i32[i+2]==1728;
         }
-        if(!high&&!square&&!classic)throw std::runtime_error("No supported camera resolution");
-        // Select an explicit supported mode; do not confuse pixel count with FOV.
-        width=(requestedSize==1728&&high)?1728:1280;
-        height=width==1728?1728:square?1280:960;
-        if(width==1280&&!square&&!classic){width=height=1728;}
+        if(spatial){if(!sbs)throw std::runtime_error("Spatial SBS square-eye mode unavailable");width=3456;height=1728;}
+        else {
+            if(!high&&!square&&!classic)throw std::runtime_error("No supported camera resolution");
+            // Select an explicit supported mode; do not confuse pixel count with FOV.
+            width=(requestedSize==1728&&high)?1728:1280;
+            height=width==1728?1728:square?1280:960;
+            if(width==1280&&!square&&!classic){width=height=1728;}
+        }
         float cropWidth=sensorWidth, cropHeight=sensorHeight;
-        const float ratio=float(width)/height;
+        const float ratio=float(width)/(spatial?2:1)/height;
         if(cropWidth/cropHeight>ratio)cropWidth=cropHeight*ratio;
         else cropHeight=cropWidth/ratio;
         calibration[0]=intrinsics[0]/cropWidth;

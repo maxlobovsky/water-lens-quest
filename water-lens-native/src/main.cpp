@@ -101,6 +101,7 @@ struct Application {
     BenchStatus bench;
     float measuredRenderFps=0,measuredCameraFps=0;
     bool fullView=false,projectedSupported=false;
+    bool reconstructionPaused=false;
     ACameraManager* cameraManager=nullptr;
     XrActionSet actionSet=XR_NULL_HANDLE;
     XrAction trigger=XR_NULL_HANDLE,grip=XR_NULL_HANDLE,stick=XR_NULL_HANDLE,toggle=XR_NULL_HANDLE,cycle=XR_NULL_HANDLE;
@@ -180,7 +181,7 @@ struct Application {
         android.applicationVM=app->activity->vm;android.applicationActivity=app->activity->clazz;
         XrInstanceCreateInfo info{XR_TYPE_INSTANCE_CREATE_INFO};info.next=&android;
         std::strcpy(info.applicationInfo.applicationName,"Water Lens Stereo");
-        info.applicationInfo.applicationVersion=9;info.applicationInfo.apiVersion=XR_MAKE_VERSION(1,0,34);
+        info.applicationInfo.applicationVersion=10;info.applicationInfo.apiVersion=XR_MAKE_VERSION(1,0,34);
         info.enabledExtensionCount=enabled.size();info.enabledExtensionNames=enabled.data();
         XR(xrCreateInstance(&info,&instance));
         XrSystemGetInfo systemInfo{XR_TYPE_SYSTEM_GET_INFO};systemInfo.formFactor=XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
@@ -477,8 +478,26 @@ struct Application {
         if(ACameraManager_getCameraIdList(cameraManager,&ids)!=ACAMERA_OK)throw std::runtime_error("Camera discovery failed");
         for(int i=0;i<ids->numCameras;i++){
             ACameraMetadata* metadata=nullptr;
-            if(ACameraManager_getCameraCharacteristics(cameraManager,ids->cameraIds[i],&metadata)!=ACAMERA_OK)continue;
+            const auto metadataResult=ACameraManager_getCameraCharacteristics(cameraManager,ids->cameraIds[i],&metadata);
+            if(metadataResult!=ACAMERA_OK){
+                if(bench.enabled)LOGI("BENCH camera id=%s metadata result=%d",ids->cameraIds[i],metadataResult);
+                continue;
+            }
             ACameraMetadata_const_entry source{},position{};
+            ACameraMetadata_const_entry format{};
+            if(bench.enabled&&bench.mode==3){
+                const int src=Camera::entry(metadata,0x80004d00,source)?Camera::integer(source):-1;
+                const int fmt=Camera::entry(metadata,0x80004d08,format)?Camera::integer(format):-1;
+                LOGI("BENCH visible camera id=%s source=%d spatial_format=%d",ids->cameraIds[i],src,fmt);
+                if(Camera::entry(metadata,0x80004d00,source)&&Camera::integer(source)==3&&
+                   Camera::entry(metadata,0x80004d08,format)&&Camera::integer(format)==0){
+                    try{for(int eye=0;eye<2;eye++){
+                        cameras[eye].id=ids->cameraIds[i];cameras[eye].eye=eye;
+                        cameras[eye].configure(metadata,1728,true);
+                    }}catch(...){ACameraMetadata_free(metadata);ACameraManager_deleteCameraIdList(ids);throw;}
+                }
+                ACameraMetadata_free(metadata);continue;
+            }
             if(Camera::entry(metadata,0x80004d00,source)&&Camera::integer(source)==0&&Camera::entry(metadata,0x80004d01,position)){
                 const int eye=Camera::integer(position);
                 if(eye==0||eye==1){
@@ -489,7 +508,9 @@ struct Application {
             ACameraMetadata_free(metadata);
         }
         ACameraManager_deleteCameraIdList(ids);
-        if(cameras[0].id.empty()||cameras[1].id.empty()||cameras[0].id==cameras[1].id)
+        if(bench.enabled&&bench.mode==3&&cameras[0].id.empty())
+            throw std::runtime_error("Spatial stereo camera is not exposed to this app");
+        if(cameras[0].id.empty()||cameras[1].id.empty()||(!cameras[0].spatialSbs&&cameras[0].id==cameras[1].id))
             throw std::runtime_error("Two distinct passthrough cameras are required");
     }
     void manageCameras(double now){
@@ -501,7 +522,8 @@ struct Application {
         if(!camerasStarted&&wanted&&now>=retryCameraAt){
             try{
                 discoverCameras();
-                for(auto& c:cameras)c.start(cameraManager,display);
+                cameras[0].start(cameraManager,display);
+                if(!cameras[0].spatialSbs)cameras[1].start(cameraManager,display);
                 camerasStarted=true;pairCount=0;stereoAnnounced=false;
                 LOGI("Both cameras open. Waiting for a synchronized stereo pair.");
             }catch(const std::exception& e){
@@ -525,6 +547,10 @@ struct Application {
     }
     void updateCameras(XrTime predicted){
         if(!camerasStarted)return;
+        if(cameras[0].spatialSbs){
+            auto& c=cameras[0];c.acquire();if(!c.pending.image)return;
+            capturePose(c,c.pending,predicted);c.promote();pairCount++;return;
+        }
         for(auto& c:cameras)c.acquire();
         auto& left=cameras[0];auto& right=cameras[1];
         if(!left.pending.image||!right.pending.image)return;
@@ -595,10 +621,23 @@ struct Application {
         }
         input(dt);manageCameras(now);manageDepth();
         updateCameras(frame.predictedDisplayTime);
+        const bool pauseReconstruction=projected.ready&&projected.solo()&&fullView&&!clear&&strength>.001f;
+        if(pauseReconstruction!=reconstructionPaused){
+            if(pauseReconstruction){
+                auto pause=function<PFN_xrPassthroughLayerPauseFB>(instance,"xrPassthroughLayerPauseFB");
+                XR(pause(passthroughLayer));
+            }else{
+                auto resume=function<PFN_xrPassthroughLayerResumeFB>(instance,"xrPassthroughLayerResumeFB");
+                XR(resume(passthroughLayer));
+            }
+            reconstructionPaused=pauseReconstruction;
+            LOGI("SURFACE reconstruction paused=%d",reconstructionPaused);
+        }
         XrCompositionLayerPassthroughFB passthroughComposition{XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
         passthroughComposition.layerHandle=passthroughLayer;
         const XrCompositionLayerBaseHeader* layers[3]{reinterpret_cast<XrCompositionLayerBaseHeader*>(&passthroughComposition),nullptr,nullptr};
-        uint32_t layerCount=frame.shouldRender?1:0;
+        const bool reconstructionSubmitted=frame.shouldRender&&!reconstructionPaused;
+        uint32_t layerCount=reconstructionSubmitted?1:0;
         XrView views[2]{{XR_TYPE_VIEW},{XR_TYPE_VIEW}};
         XrViewLocateInfo locate{XR_TYPE_VIEW_LOCATE_INFO};locate.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
         locate.displayTime=frame.predictedDisplayTime;locate.space=local;
@@ -624,10 +663,11 @@ struct Application {
         XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
         const auto flags=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
         bool fresh=false;
-        if(camerasStarted&&cameras[0].current.image&&cameras[1].current.image){
+        const auto& rightFrame=cameras[cameras[0].spatialSbs?0:1].current;
+        if(camerasStarted&&cameras[0].current.image&&rightFrame.image){
             const int64_t clockNow=nanos(CLOCK_MONOTONIC);
             fresh=clockNow-cameras[0].current.receivedAt<250000000LL&&
-                  clockNow-cameras[1].current.receivedAt<250000000LL;
+                  clockNow-rightFrame.receivedAt<250000000LL;
         }
         const bool showWater=!fullView&&!clear&&fresh;
         if(frame.shouldRender&&(showWater||showHud)&&count==2&&(viewState.viewStateFlags&flags)==flags){
@@ -648,8 +688,10 @@ struct Application {
             for(int eye=0;eye<2;eye++){
                 glUseProgram(program);glBindVertexArray(vao);
                 auto& chain=chains[eye];auto& camera=cameras[eye];
+                auto& frameOwner=cameras[cameras[0].spatialSbs?0:eye];
+                const auto& cameraFrame=frameOwner.current;
                 const auto worldFromEye=poseMatrix(views[eye].pose);
-                const auto captureHead=poseMatrix(camera.current.poseValid?camera.current.headPose:currentHead.pose);
+                const auto captureHead=poseMatrix(cameraFrame.poseValid?cameraFrame.headPose:currentHead.pose);
                 const auto cameraFromEye=multiply(multiply(camera.cameraFromHead,inverse(captureHead)),worldFromEye);
                 glUniformMatrix4fv(uniform("cameraFromEye"),1,GL_FALSE,cameraFromEye.m);
                 glUniform4fv(uniform("calibration"),1,camera.calibration);
@@ -657,13 +699,14 @@ struct Application {
                 glUniform3fv(uniform("radial"),1,camera.distortion);
                 glUniform2fv(uniform("tangential"),1,camera.distortion+3);
                 glUniform1i(uniform("eye"),eye);setFov("fov",views[eye].fov);
+                glUniform1i(uniform("spatialSbs"),camera.spatialSbs);
                 if(validDepth){
                     const auto depthFromEye=multiply(inverse(poseMatrix(depth.views[eye].pose)),worldFromEye);
                     glUniformMatrix4fv(uniform("depthFromEye"),1,GL_FALSE,depthFromEye.m);
                     setFov("depthFov",depth.views[eye].fov);
                     glUniform1f(uniform("depthNear"),depth.nearZ);glUniform1f(uniform("depthFar"),depth.farZ);
                 }
-                glBindTexture(GL_TEXTURE_EXTERNAL_OES,camera.current.texture);
+                glBindTexture(GL_TEXTURE_EXTERNAL_OES,cameraFrame.texture);
                 uint32_t index=0;XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
                 XR(xrAcquireSwapchainImage(chain.handle,&ai,&index));
                 XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};wi.timeout=XR_INFINITE_DURATION;
@@ -672,9 +715,9 @@ struct Application {
                 glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,chain.images[index].image,0);
                 if(glCheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE)throw std::runtime_error("Incomplete XR framebuffer");
                 glViewport(0,0,chain.width,chain.height);
-                if(showWater){glDrawArrays(GL_TRIANGLES,0,3);camera.markUsed();}
+                if(showWater){glDrawArrays(GL_TRIANGLES,0,3);frameOwner.markUsed();}
                 else {const GLfloat transparent[4]{};glClearBufferfv(GL_COLOR,0,transparent);}
-                if(captureDiagnostic)diagnostic.capture(eye,camera,framebuffer,chain.width,chain.height,views[eye],currentHead.pose);
+                if(captureDiagnostic)diagnostic.capture(eye,camera,cameraFrame,framebuffer,chain.width,chain.height,views[eye],currentHead.pose);
                 if(showHud)hud.draw(views[eye],panelPose,launcherPose);
                 glBindFramebuffer(GL_FRAMEBUFFER,0);glFlush();
                 XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};XR(xrReleaseSwapchainImage(chain.handle,&release));
@@ -693,7 +736,7 @@ struct Application {
         if(now-lastStats>=2){
             const double elapsed=lastStats?now-lastStats:2;
             measuredRenderFps=renderCount/elapsed;measuredCameraFps=pairCount/elapsed;
-            LOGI("STATS v9 fullView=%d camera=%d render=%.1ffps stereo=%.1ffps depth=%d capturePose=%d/%d hands=%d/%d view=%.2f strength=%.2f speed=%.2f density=%.2f mix=%.2f sharp=%.2f",
+            LOGI("STATS v10 fullView=%d camera=%d render=%.1ffps stereo=%.1ffps depth=%d capturePose=%d/%d hands=%d/%d view=%.2f strength=%.2f speed=%.2f density=%.2f mix=%.2f sharp=%.2f",
                 fullView,cameras[0].width,
                 renderCount/elapsed,pairCount/elapsed,depthRunning,cameras[0].current.poseValid,cameras[1].current.poseValid,handVisible[0],handVisible[1],coverage,strength,speed,density,complexity,sharpness);
             if(projected.updates){LOGI("FULLVIEW update=%.3fms mesh=%.1ffps",projected.updateMilliseconds/projected.updates,projected.updates/elapsed);projected.updates=0;projected.updateMilliseconds=0;}
@@ -701,7 +744,7 @@ struct Application {
         }
         bench.write(now,settings(),focused,frame.shouldRender,(currentHead.locationFlags&headFlags)==headFlags,
             count==2&&(viewState.viewStateFlags&flags)==flags,fresh,showWater&&projection.viewCount==2,
-            surfaceSubmitted,measuredRenderFps,measuredCameraFps);
+            surfaceSubmitted,measuredRenderFps,measuredCameraFps,projected.experiment,reconstructionSubmitted);
     }
     void run(){
         while(!app->destroyRequested&&!exit){

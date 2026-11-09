@@ -39,7 +39,18 @@ The script chooses the connected Quest, preferring USB; use `-Device <adb-id>` i
 
 Results are reused under `water-lens-native/build/unattended-<mode>.*` (`.json`, `.mp4`, `.png`, `.log`). Runtime PASS means the requested renderer stayed active; it does not certify the visual effect or stereo comfort. The test uses a one-launch local configuration file, not a network server. If a host process is interrupted, its saved device state is recovered on the next run; proximity also has a time limit.
 
-`Camera`, `Normal`, `Surface`, and `SurfaceProbe` are supported. Controls can be set with `-Strength`, `-Speed`, `-Ripples`, `-CrossWaves`, `-Sharpness`, and `-ViewSize`. `SurfaceProbe` colors the projected layer green and changes its footprint to test mesh visibility.
+The current harness requires app version 0.10 or newer. Controls can be set with `-Strength`, `-Speed`, `-Ripples`, `-CrossWaves`, `-Sharpness`, and `-ViewSize`.
+
+| Mode | What it checks |
+| --- | --- |
+| `Camera` / `Normal` | Working camera effect / unchanged system passthrough |
+| `Surface` / `SurfaceProbe` | Depth waves / green pulsing footprint, over normal passthrough |
+| `SurfaceSolo` | Depth waves with normal passthrough paused and omitted |
+| `SurfaceSweep` | Alternate 20 cm and 8 m planes every two seconds, without normal passthrough |
+| `SurfaceNear` / `SurfaceFar` | Independently created immutable 20 cm / 8 m meshes |
+| `Spatial` | Attempt the OS-advertised side-by-side spatial camera; unavailable to this app on the tested headset |
+
+`-CameraReadback` on Camera or Spatial saves one pair of raw/render/alpha previews. Those extra GPU readbacks temporarily affect frame rate; normal launches have none. `python analyze-full-view.py` compares the local captures and creates a private annotated comparison video. It requires OpenCV and NumPy in the shared Python environment, plus FFmpeg on PATH.
 
 ## Build from source on Windows
 
@@ -70,6 +81,8 @@ Browser logic checks run with `node water-lens/tests/rendering.cjs`. Native cont
 - 1728×1728 camera streams increase resolution but showed essentially the same field of view as 1280×1280 on the tested headset.
 - The renderer requests the highest supported refresh rate (120 Hz on the test device). Camera frames arrive separately, typically around 45–60 stereo pairs/sec in the captured sessions. These rates are not measured motion-to-photon latency.
 - Native surface-projected passthrough is visible in both eyes and accepts mutable mesh updates. A green-window diagnostic visibly changed its footprint, but changing surface depth has not delivered the desired water refraction.
+- Further USB tests ruled out the reconstruction underlay and mutable-mesh caching as the obvious causes: surface-only waves, a near/far depth sweep, and separately created immutable near/far surfaces still produced no useful distortion. Near/far feature displacement was about 0.24–0.25 pixels at 1920×1080 stereo capture resolution, with image scale effectively unchanged.
+- The OS advertises an additional spatial stereo stream, documented by Meta's [virtual-camera API](https://developers.meta.com/vr/reference/metavr-os-nsdk/v207/enum_virtual_camera_8h_mvr_virtual_camera_source/). It is absent from this app's Camera2 enumeration; the device reports its permission as `internal|role`. The opt-in spatial rendering path remains unvalidated because the stream cannot be opened through the app's available permissions.
 - Unattended capture can verify rendering, calibration paths and controls programmatically. Stereo comfort and behavior during real head/hand movement still need wearer testing.
 
 Personal room/screen recordings, raw camera captures, signing keys, SDK downloads and local build outputs are excluded from this repository. No account credentials are required by the app. Camera images are processed on-device; ordinary launches do not record or upload them.

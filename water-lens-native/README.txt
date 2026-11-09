@@ -1,7 +1,7 @@
 Water Lens Stereo — native Quest 3 prototype
 
 STATE (2026-11-09)
-Version 0.9-usb-bench (versionCode 9) is built, signature-verified and installed.
+Version 0.10-full-view-lab (versionCode 10) is built, signature-verified and installed.
 It starts in the working Camera mode at 100% view. The failed Full view test is
 now labeled Surface test, with an explicit no-visible-water note in its panel.
 Worn-headset result: Surface/Full view has no visible water distortion or
@@ -222,6 +222,48 @@ excludes personal room/screen recordings. Native Android screenrecord captures t
 actual stereo compositor. MetaCam screenshots can omit a projected layer even
 when it appears in the stereo recording; do not infer layer visibility from those
 flat screenshots alone. Prefer screencap or the recorded stereo frames.
+
+FURTHER FULL-VIEW INVESTIGATION (2026-11-09)
+All new captures were made over USB with the headset stationary and unworn.
+SurfaceSolo pauses and omits the reconstruction underlay, then animates the
+projected mesh at strength 1, speed 7, sharpness .9 and view 1. This still did not
+produce useful water distortion. SurfaceSweep alternates 0.20 m and 8 m depth
+every two seconds while preserving angular extent. SurfaceNear / SurfaceFar
+create immutable meshes at those depths, avoiding mutable-buffer caching.
+Neither approach produced meaningful image remapping. The immutable comparison
+tracked 270 left-eye and 261 right-eye features: median displacement 0.238/0.251
+pixels, fitted scales 0.99954/0.99996, at 1920x1080 stereo recording resolution.
+These are image measurements, not a guarantee of all possible runtime behavior.
+Across sampled frames, median feature motion was 0.20/0.20 pixels for ordinary
+passthrough, 0.21/0.22 for surface-only waves, and 10.82/11.29 for the working
+Camera water effect. The negative result is comparable with the no-effect
+baseline; the same measurement clearly detects the existing water animation.
+
+The service's camera capabilities also advertise a spatial SBS stream with
+3456x1728 output and separate per-eye calibration. Meta's NSDK identifies
+camera_source=3 as spatial and spatial_format=0 as side-by-side. A GPU SBS import
+and calibrated per-eye sampling experiment is implemented behind bench mode 3
+(test-unattended.ps1 -Mode Spatial). Actual app enumeration contains only the
+avatar and two regular passthrough cameras. The spatial stream is hidden; the
+OS reports horizonos.permission.SPATIAL_CAMERA as internal|role. No privilege
+changes were attempted. The SBS rendering path is not runtime-validated.
+
+The harness now verifies app version, requested surface experiment and absence
+of reconstruction in solo tests. It saves direct screencap output and per-PID
+logs; the spatial failure also completed setting restoration. -CameraReadback
+saves actual raw/render/alpha images; this produces a brief readback stall.
+Use analyze-full-view.py after the relevant captures to produce local image
+motion measurements and full-view-investigation.mp4/.jpg. All imagery stays
+under ignored build/. The ordinary app still starts in working Camera mode.
+
+The full-view, live stereo distortion objective remains unachieved. Mirroring
+or synthesizing missing edge pixels would not reveal the actual peripheral room;
+screen capture would add latency and risk feedback from the app's own output.
+
+https://developers.meta.com/vr/reference/metavr-os-nsdk/v207/enum_virtual_camera_8h_mvr_virtual_camera_source/
+https://developers.meta.com/horizon/reference/metavr-os-nsdk/v207/enum_virtual_camera_8h_mvr_virtual_camera_spatial_format/
+https://developers.meta.com/vr/reference/metavr-os-nsdk/v207/struct_mvr_virtual_camera_configuration/
+https://developers.meta.com/vr/documentation/native/android/mobile-passthrough-customization/
 
 PREVIEW / SHADER CHECK
 Serve this directory locally and open preview.html. It loads src/shaders.h, compiles

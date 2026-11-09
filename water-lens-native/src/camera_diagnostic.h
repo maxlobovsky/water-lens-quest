@@ -38,8 +38,9 @@ struct CameraDiagnostic {
 precision highp float;
 in vec2 uv;
 uniform samplerExternalOES cameraImage;
+uniform vec2 packing;
 out vec4 color;
-void main(){color=vec4(texture(cameraImage,vec2(uv.x,1.-uv.y)).rgb,1.);}
+void main(){color=vec4(texture(cameraImage,vec2(uv.x*packing.x+packing.y,1.-uv.y)).rgb,1.);}
 )glsl";
         cameraProgram=glCreateProgram();
         for(int i=0;i<2;i++){
@@ -52,7 +53,7 @@ void main(){color=vec4(texture(cameraImage,vec2(uv.x,1.-uv.y)).rgb,1.);}
         glLinkProgram(cameraProgram);GLint ok=0;glGetProgramiv(cameraProgram,GL_LINK_STATUS,&ok);
         if(!ok)throw std::runtime_error("Diagnostic camera program failed");
     }
-    void capture(int eye,const Camera& camera,GLuint sourceFramebuffer,int w,int h,const XrView& view,const XrPosef& headPose){
+    void capture(int eye,const Camera& camera,const CameraFrame& source,GLuint sourceFramebuffer,int w,int h,const XrView& view,const XrPosef& headPose){
         createProgram();
         constexpr int n=512;
         GLint oldProgram=0;glGetIntegerv(GL_CURRENT_PROGRAM,&oldProgram);
@@ -67,7 +68,8 @@ void main(){color=vec4(texture(cameraImage,vec2(uv.x,1.-uv.y)).rgb,1.);}
         const std::string base=directory+"/camera-"+std::to_string(camera.width)+"-eye"+std::to_string(eye);
         writeImage(base+"-render.ppm",pixels,n,false);writeImage(base+"-alpha.pgm",pixels,n,true);
         int covered=0;for(int i=0;i<n*n;i++)covered+=pixels[i*4+3]>127;
-        glUseProgram(cameraProgram);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_EXTERNAL_OES,camera.current.texture);
+        glUseProgram(cameraProgram);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_EXTERNAL_OES,source.texture);
+        glUniform2f(glGetUniformLocation(cameraProgram,"packing"),camera.spatialSbs?.5f:1.f,camera.spatialSbs?eye*.5f:0.f);
         glUniform1i(glGetUniformLocation(cameraProgram,"cameraImage"),0);glDrawArrays(GL_TRIANGLES,0,3);
         glReadPixels(0,0,n,n,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());writeImage(base+"-raw.ppm",pixels,n,false);
         const auto err=glGetError();if(err!=GL_NO_ERROR)throw std::runtime_error("Diagnostic GL readback failed: "+std::to_string(err));

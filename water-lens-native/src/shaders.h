@@ -21,7 +21,7 @@ uniform float skew, waveTime, strength, density, complexity, coverage, sharpness
 uniform float depthNear, depthFar;
 uniform vec3 radial;
 uniform vec2 tangential;
-uniform int eye, hasDepth, srgbOutput;
+uniform int eye, hasDepth, srgbOutput, spatialSbs;
 
 float waterWave(float phase){
     // A continuous triangular crest has a sharp change in slope at its peak.
@@ -72,6 +72,7 @@ void main(){
     float edge=min(min(t.x,t.y),min(1.-t.x,1.-t.y));
     float alpha=smoothstep(.001,.005,edge);
     if(alpha==0.){color=vec4(0.);return;}
+    if(spatialSbs==1)t.x=(t.x+float(eye))*.5;
     vec3 c=texture(cameraImage,t).rgb;
     if(srgbOutput==1)c=mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),step(vec3(.04045),c));
     color=vec4(c*alpha,alpha);
