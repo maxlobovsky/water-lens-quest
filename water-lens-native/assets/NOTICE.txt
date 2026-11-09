@@ -1,0 +1,9 @@
+Water Lens Stereo uses:
+- OpenXR Loader 1.1.65, Copyright The Khronos Group Inc., Apache License 2.0.
+- xr_linear.h, Copyright 2017-2026 The Khronos Group Inc.; Copyright 2016 Oculus VR, LLC,
+  Apache License 2.0. Source: KhronosGroup/OpenXR-SDK-Source/src/common/xr_linear.h.
+- Android Native App Glue, Copyright The Android Open Source Project, Apache License 2.0.
+The license is provided in OpenXR-LICENSE.txt.
+- UI glyph atlas: Roboto, Copyright 2011 The Roboto Project Authors,
+  SIL Open Font License 1.1, included in Roboto-OFL.txt. Font source pinned by
+  make-ui-font.py; generated raster glyphs and advance metrics are included.

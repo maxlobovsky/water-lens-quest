@@ -1,0 +1,21 @@
+# Local toolchain/build output and signing material
+**/build/
+*.apk
+*.idsig
+*.keystore
+*.jks
+*.zip
+*.tar.gz
+__pycache__/
+node_modules/
+.env
+.env.*
+# Private headset imagery and device diagnostics remain local
+*.mp4
+*.ppm
+*.pgm
+water-lens-native/headset-check.png
+water-lens-native/camera-comparison.jpg
+water-lens-preview.jpg
+# The synthetic/native UI preview and app assets are intentionally public
+**/.openai/

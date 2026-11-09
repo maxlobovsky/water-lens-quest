@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102f31"><title>Water Lens</title>
+  <link rel="stylesheet" href="style.css?v=3">
+</head>
+<body>
+  <main>
+    <section class="controls">
+      <div class="eyebrow">QUEST 3 · CAMERA EXPERIMENT</div>
+      <h1>Water<br><em>Lens.</em></h1>
+      <p class="intro">See your world through a little moving water.</p>
+      <button id="camera" class="primary">Start headset camera <span>↗</span></button>
+      <button id="immersive" disabled>Enter immersive lens</button>
+      <p id="metrics" class="metrics">Measuring frame rate…</p>
+      <p id="status" role="status">Loading Water Lens v3… If this stays visible, reload the page.</p>
+      <label for="source">Camera source</label>
+      <select id="source" disabled><option>Start camera to select</option></select>
+      <div class="slider-label"><label for="strength">Ripple strength</label><output id="strengthValue">35%</output></div>
+      <input id="strength" type="range" min="0" max="100" value="35">
+      <div class="slider-label"><label for="speed">Water speed</label><output id="speedValue">0.6×</output></div>
+      <input id="speed" type="range" min="0" max="150" value="60">
+      <div class="slider-label"><label for="scale">Ripple density</label><output id="scaleValue">1.00×</output></div>
+      <input id="scale" type="range" min="30" max="250" value="100">
+      <div class="slider-label"><label for="complexity">Cross-current mix</label><output id="complexityValue">45%</output></div>
+      <input id="complexity" type="range" min="0" max="100" value="45">
+      <button id="cycle" aria-pressed="false">Slowly explore effects</button>
+      <p id="cycleStatus" class="hint">Manual settings · adjust any slider</p>
+      <button id="toggle">Compare with clear view</button>
+      <button id="stop" hidden>Stop camera</button>
+      <details><summary>Immersive lens alignment</summary>
+        <div class="slider-label"><label for="distance">Lens distance</label><output id="distanceValue">2.0 m</output></div>
+        <input id="distance" type="range" min="75" max="500" step="25" value="200">
+        <div class="slider-label"><label for="angle">Lens width</label><output id="angleValue">70°</output></div>
+        <input id="angle" type="range" min="40" max="100" value="70">
+        <p>Both eyes now view one correctly projected surface. Distance changes where your eyes converge; width changes its size. These settings apply in immersive mode.</p>
+      </details>
+      <details><summary>Using this on Quest</summary><p>Start the camera, choose your effect, then enter immersive. Trigger: switch between water and clear. Grip: start or pause the slow cycle. With hands, pinch toggles water; start the cycle here before entering. Use the Quest system menu to exit.</p><p>The cycle smoothly explores four effects, taking 24 seconds between each. Pause to keep a favorite; moving any effect slider also pauses it.</p><p>This test shows one camera image on a flat virtual lens, not a depth-correct stereo view of the room. The image will not line up exactly with the surrounding passthrough. Camera images stay on your device.</p></details>
+      <footer>WATER STUDY / 03</footer>
+    </section>
+    <section class="view" aria-label="Water distortion preview">
+      <canvas id="view"></canvas>
+      <div class="view-top"><span id="badge">SAMPLE ROOM</span><span class="live-dot">● LIVE EFFECT</span></div>
+      <div class="view-bottom"><span>Slow down.<br>Watch the edges move.</span><span id="effectState">RIPPLES ON</span></div>
+    </section>
+  </main>
+  <video id="video" autoplay playsinline muted class="camera-video"></video>
+  <script>window.addEventListener("error", function(event) { document.getElementById("status").textContent = "Page error — " + event.message + ". Reload this page."; });</script>
+  <script src="app.js?v=3"></script>
+</body>
+</html>

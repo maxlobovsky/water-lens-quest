@@ -1,0 +1,132 @@
+<!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Water Lens - visible hand controls</title>
+<style>
+body{margin:0;padding:26px;background:#102c30;color:#e6f3e9;font:16px/1.5 system-ui}h1{font:38px Georgia;margin:0}.heading{display:flex;gap:18px;align-items:center}.heading img{width:70px;border-radius:18px}p{color:#a9c5bf;max-width:1000px}.demo{display:grid;grid-template-columns:minmax(340px,.8fr) minmax(460px,1.2fr);gap:26px;align-items:start}.views{display:flex;gap:12px}canvas{width:100%;display:block;aspect-ratio:1;background:#000}.eye{flex:1}#hud{aspect-ratio:1/1.08;max-width:520px}.caption{font-size:12px;color:#b3cac4;letter-spacing:1px}label{display:block;margin:12px 0}#result{padding:12px;background:#204b42;border-radius:8px;font-size:13px}strong{color:#e6f3e9}@media(max-width:850px){.demo{display:block}}
+</style>
+<div class="heading"><img src="icon.svg" alt="Water Lens app icon"><h1>Water Lens - visible hand controls</h1></div>
+<p>Point until a control highlights, then pinch your thumb and index finger to click. The same action works with either hand.</p>
+<div id="result" role="status">Checking native rendering...</div>
+<div class="demo"><div><p class="caption">NATIVE CONTROL PANEL</p><canvas id="hud" width="1000" height="1080"></canvas></div><div>
+<p><strong>Choose a preset</strong> to get an immediate effect. Use <strong>+ / -</strong> for small adjustments, or pinch and hold a slider handle to move it.</p>
+<p><strong>Hide</strong> clears the panel. A small <strong>Controls</strong> tab stays at the lower right of your view. Point at it and pinch to reopen.</p>
+<p class="caption">COMPACT CONTROLS TAB - SCREEN FIXED</p><canvas id="reopen" width="500" height="250" style="max-width:360px;aspect-ratio:2"></canvas>
+<label><input id="effect" type="checkbox" checked> Preview water distortion</label>
+<label>Preview view size <input id="coverage" type="range" min="1" max="3" step=".01" value="1"> <output id="size">100%</output></label>
+<label>Preview speed <input id="speed" type="range" min="0" max="12" step=".1" value="7"> <output id="speedValue">7.0</output></label>
+<label>Preview sharpness <input id="sharpness" type="range" min="0" max="1" step=".01" value=".9"> <output id="sharpValue">90%</output></label>
+<div class="views"><div class="eye"><p class="caption">LEFT EYE</p><canvas id="left" width="640" height="640"></canvas></div><div class="eye"><p class="caption">RIGHT EYE</p><canvas id="right" width="640" height="640"></canvas></div></div>
+<p class="caption">SYNTHETIC CAMERA INPUT - NOT A HEADSET RECORDING</p>
+<p>This preview renders the exact native panel geometry, font atlas, and shaders. Panel buttons are interactive in the installed Quest app. View size above 100% magnifies the available camera image.</p>
+</div></div>
+<script type="module">
+const header=await (await fetch('src/shaders.h')).text();
+const sources=[...header.matchAll(/R"glsl\(([\s\S]*?)\)glsl"/g)].map(m=>m[1]);
+sources[1]=sources[1].replace('#extension GL_OES_EGL_image_external_essl3 : require','').replace('samplerExternalOES','sampler2D');
+let passed=0;
+try {
+// Render the real native panel mesh, shaders and raster glyph asset.
+const hudHeader=await (await fetch('src/hud.h')).text();
+const hudSources=[...hudHeader.matchAll(/R"glsl\(([\s\S]*?)\)glsl"/g)].map(m=>m[1]);
+const atlas=new Uint8Array(await (await fetch('assets/ui-font.r8')).arrayBuffer());
+function drawPanel(canvasId,mesh,transform){
+const hg=document.getElementById(canvasId).getContext('webgl2');
+const hp=hg.createProgram();
+hudSources.forEach((source,i)=>{const shader=hg.createShader(i?hg.FRAGMENT_SHADER:hg.VERTEX_SHADER);hg.shaderSource(shader,source);hg.compileShader(shader);if(!hg.getShaderParameter(shader,hg.COMPILE_STATUS))throw Error(hg.getShaderInfoLog(shader));hg.attachShader(hp,shader);});
+hg.linkProgram(hp);if(!hg.getProgramParameter(hp,hg.LINK_STATUS))throw Error(hg.getProgramInfoLog(hp));hg.useProgram(hp);
+hg.bindTexture(hg.TEXTURE_2D,hg.createTexture());hg.texImage2D(hg.TEXTURE_2D,0,hg.R8,512,264,0,hg.RED,hg.UNSIGNED_BYTE,atlas);hg.texParameteri(hg.TEXTURE_2D,hg.TEXTURE_MIN_FILTER,hg.LINEAR);hg.texParameteri(hg.TEXTURE_2D,hg.TEXTURE_MAG_FILTER,hg.LINEAR);hg.texParameteri(hg.TEXTURE_2D,hg.TEXTURE_WRAP_S,hg.CLAMP_TO_EDGE);hg.texParameteri(hg.TEXTURE_2D,hg.TEXTURE_WRAP_T,hg.CLAMP_TO_EDGE);
+hg.bindVertexArray(hg.createVertexArray());hg.bindBuffer(hg.ARRAY_BUFFER,hg.createBuffer());
+const sizes=[2,2,4,4],offsets=[0,2,4,8];for(let i=0;i<4;i++){hg.enableVertexAttribArray(i);hg.vertexAttribPointer(i,sizes[i],hg.FLOAT,false,48,offsets[i]*4);}
+hg.uniform1f(hg.getUniformLocation(hp,'planeDepth'),1);hg.bufferData(hg.ARRAY_BUFFER,new Float32Array(mesh.vertices),hg.STATIC_DRAW);hg.uniformMatrix4fv(hg.getUniformLocation(hp,'transform'),false,new Float32Array(transform));hg.clearColor(.015,.035,.04,1);hg.clear(hg.COLOR_BUFFER_BIT);hg.enable(hg.BLEND);hg.blendFunc(hg.ONE,hg.ONE_MINUS_SRC_ALPHA);hg.drawArrays(hg.TRIANGLES,0,mesh.vertices.length/12);
+if(hg.getError()!==hg.NO_ERROR)throw Error('Native panel rendering failed');
+}
+drawPanel('hud',await (await fetch('build/panel-preview.json')).json(),[1.95,0,0,0,0,1.75,0,0,0,0,0,0,0,.29,0,1]);
+drawPanel('reopen',await (await fetch('build/reopen-preview.json')).json(),[10,0,0,0,0,20,0,0,0,0,0,0,-4.8,9,0,1]);
+const eyes=[0,1].map(eye=>{
+  const canvas=document.getElementById(eye?'right':'left'), gl=canvas.getContext('webgl2',{antialias:false,preserveDrawingBuffer:true});
+  if(!gl)throw Error('WebGL2 unavailable');
+  const program=gl.createProgram();
+  sources.forEach((source,i)=>{
+    const shader=gl.createShader(i?gl.FRAGMENT_SHADER:gl.VERTEX_SHADER);
+    gl.shaderSource(shader,source);gl.compileShader(shader);
+    if(!gl.getShaderParameter(shader,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(shader));
+    gl.attachShader(program,shader);
+  });
+  gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);gl.bindVertexArray(gl.createVertexArray());
+  const uniform=name=>gl.getUniformLocation(program,name);
+  const camera=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,camera);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  const n=512,pixels=new Uint8Array(n*n*4);
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+    const i=(y*n+x)*4;pixels[i]=Math.round(x/(n-1)*255);pixels[i+1]=Math.round(y/(n-1)*255);pixels[i+2]=eye?192:64;pixels[i+3]=255;
+  }
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,n,n,0,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+  gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D_ARRAY,gl.createTexture());
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D_ARRAY,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+  gl.texImage3D(gl.TEXTURE_2D_ARRAY,0,gl.R32F,1,1,2,0,gl.RED,gl.FLOAT,new Float32Array([.95959596,.95959596]));
+  gl.activeTexture(gl.TEXTURE0);
+  const identity=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+  const eyeX=eye?.032:-.032,cameraX=eye?.07:-.07,offset=eyeX-cameraX;
+  const cameraFromEye=new Float32Array([1,0,0,0,0,-1,0,0,0,0,-1,0,offset,0,0,1]);
+  gl.uniformMatrix4fv(uniform('cameraFromEye'),false,cameraFromEye);gl.uniformMatrix4fv(uniform('depthFromEye'),false,identity);
+  gl.uniform4f(uniform('calibration'),.5,.5,.5,.5);gl.uniform4f(uniform('fov'),-1,1,-1,1);
+  gl.uniform4f(uniform('depthFov'),-1,1,-1,1);gl.uniform1f(uniform('depthNear'),.1);gl.uniform1f(uniform('depthFar'),10);
+  gl.uniform1f(uniform('density'),1);gl.uniform1f(uniform('complexity'),.45);
+  gl.uniform1i(uniform('cameraImage'),0);gl.uniform1i(uniform('depthImage'),1);gl.uniform1i(uniform('eye'),eye);
+  for(const coverage of [1,1.2,1.5,1.8,2.4,3])for(const [depthEnabled,distance] of [[0,2],[1,1],[1,2]]){
+    gl.uniform1f(uniform('coverage'),coverage);
+    const depthValue=10/9.9-1/(9.9*distance);
+    gl.activeTexture(gl.TEXTURE1);gl.texSubImage3D(gl.TEXTURE_2D_ARRAY,0,0,0,0,1,1,2,gl.RED,gl.FLOAT,new Float32Array([depthValue,depthValue]));gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1i(uniform('hasDepth'),depthEnabled);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    for(const [x,y] of [[160,160],[320,320],[480,480]]){
+      const pixel=new Uint8Array(4);gl.readPixels(x,y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);
+      const u=(x+.5)/640,v=(y+.5)/640;
+      const expected=[(.5+(u-.5)/coverage+offset/(2*distance))*255,(.5+(.5-v)/coverage)*255,eye?192:64,255];
+      if(pixel.some((value,i)=>Math.abs(value-expected[i])>2))throw Error('Per-eye calibration or image orientation check failed: '+pixel+' expected '+expected);
+      passed++;
+    }
+  }
+  // Check the actual warp against smooth, intermediate and pointed wave shapes.
+  gl.uniform1i(uniform('hasDepth'),0);gl.uniform1f(uniform('coverage'),1.2);gl.uniform1f(uniform('strength'),.9);gl.uniform1f(uniform('density'),2.1);gl.uniform1f(uniform('complexity'),.7);
+  for(const sharp of [0,.5,1])for(const time of [.37,6.4]){
+    gl.uniform1f(uniform('sharpness'),sharp);gl.uniform1f(uniform('waveTime'),time);gl.drawArrays(gl.TRIANGLES,0,3);
+    const wave=phase=>{const f=phase/(2*Math.PI)+.25;const t=1-4*Math.abs((f-Math.floor(f))-.5);return Math.sin(phase)*(1-sharp)+t*(1-sharp+t*t*sharp)*sharp;};
+    for(const [x,y] of [[160,160],[320,320],[480,480]]){
+      const ax=((x+.5)/640*2-1)/1.2,ay=((y+.5)/640*2-1)/1.2,qx=ax*2.1,qy=ay*2.1;
+      const fx=wave(qy*12+time*.85)+wave(qx*8+qy*6-time*.57)*.7;
+      const fy=wave(qx*11-time*.74+Math.PI/2)+wave(qy*9-qx*5+time*.63)*.7;
+      const expected=[(.5+(ax+fx*.9*.025+offset/2)*.5)*255,(.5-(ay+fy*.9*.025)*.5)*255,eye?192:64,255];
+      const pixel=new Uint8Array(4);gl.readPixels(x,y,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);
+      if(pixel.some((v,i)=>Math.abs(v-expected[i])>2))throw Error('Pointed wave projection failed: '+pixel+' expected '+expected);
+      passed++;
+    }
+  }
+  gl.uniform1f(uniform('strength'),0);gl.uniform1f(uniform('sharpness'),0);gl.uniform1f(uniform('density'),1);gl.uniform1f(uniform('complexity'),.45);
+  gl.uniform4f(uniform('fov'),-1.4,1.4,-1.4,1.4);
+  for(const coverage of [1,1.5]){
+    gl.uniform1f(uniform('coverage'),coverage);gl.drawArrays(gl.TRIANGLES,0,3);
+    const pixel=new Uint8Array(4);gl.readPixels(20,320,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixel);
+    if(pixel[3] !== (coverage===1?0:255))throw Error('Wider coverage alpha check failed: '+pixel);
+    passed++;
+  }
+  // Replace the diagnostic gradient with a synthetic tiled wall in each camera.
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+    const i=(y*n+x)*4,u=x/(n-1),v=y/(n-1);
+    const worldX=cameraX+(u-.5)*4,worldY=(.5-v)*4;
+    const line=Math.abs(worldX*3-Math.round(worldX*3))<.035||Math.abs(worldY*3-Math.round(worldY*3))<.035;
+    const marker=Math.abs(worldX)<.07&&Math.abs(worldY)<.7;
+    const c=marker?[230,169,105]:line?[51,92,89]:[160,191,174];
+    pixels.set([...c,255],i);
+  }
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,n,n,0,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+  return {gl,uniform};
+});
+document.getElementById('result').textContent=passed+' pixel checks passed · stereo/depth/coverage/peaked waves. Native control-panel shaders also compiled and rendered. This is a simulation, not a Quest camera recording.';
+let lastFrame=0,phase=0;
+function frame(time){const coverage=+document.getElementById('coverage').value,speed=+document.getElementById('speed').value,sharp=+document.getElementById('sharpness').value;phase+=Math.min(.1,lastFrame?(time-lastFrame)*.001:0)*speed;lastFrame=time;document.getElementById('size').textContent=Math.round(coverage*100)+'%';document.getElementById('speedValue').textContent=speed.toFixed(1);document.getElementById('sharpValue').textContent=Math.round(sharp*100)+'%';for(const {gl,uniform} of eyes){gl.uniform1f(uniform('coverage'),coverage);gl.uniform1f(uniform('waveTime'),phase);gl.uniform1f(uniform('sharpness'),sharp);gl.uniform1f(uniform('density'),1.4);gl.uniform1f(uniform('complexity'),.65);gl.uniform1f(uniform('strength'),document.getElementById('effect').checked?.7:0);gl.drawArrays(gl.TRIANGLES,0,3);}requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+}catch(error){document.getElementById('result').textContent='FAILED: '+error.message;throw error;}
+</script>
